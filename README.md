@@ -1,7 +1,21 @@
 # Conference Schedule Planner
 
 학회 세션 PDF에서 발표 정보를 추출하여, 듣고 싶은 발표를 선택하고
-일정·동선을 자동으로 계획해 주는 도구. 여러 학회의 데이터를 하나의 사이트에서 다룰 수 있습니다.
+일정·동선을 자동으로 계획해 주는 도구. 한 URL에서 여러 학회를 함께 다룰 수 있습니다.
+
+배포본: [https://imeru.github.io/conference-planner/](https://imeru.github.io/conference-planner/)
+
+---
+
+## 현재 등록된 학회
+
+| ID | 이름 | 일시 | 회장 | 세션 | 발표 |
+|---|---|---|---|---|---|
+| `iaqvec-2026` | IAQVEC 2026 | 2026/5/19–21 (USC) | SGM·GFS·VHE | 60 | 321 |
+| `sarek-2025-winter` | 대한설비공학회 2025 동계학술발표대회 | 2025/11/28 (한국과학기술회관) | 제1~제7회장 | 34 | 159 |
+| `sarek-2025-summer` | 대한설비공학회 2025 하계학술발표대회 | 2025/6/19–20 (평창 알펜시아) | 제1~제12회장 | 66 | 312 |
+
+기본 학회는 IAQVEC 2026이며, URL 끝에 `?conf=<id>`를 붙이면 다른 학회로 전환됩니다. 헤더 드롭다운으로도 즉시 전환 가능합니다.
 
 ---
 
@@ -9,12 +23,16 @@
 
 ```
 conference-planner/
-├── index.html              # 도구 본체 (학회별 데이터 로드)
-├── conferences.json        # 사용 가능한 학회 목록 + default
+├── index.html                    # 도구 본체 (학회별 데이터를 부팅 시 fetch)
+├── conferences.json              # 사용 가능한 학회 목록 + default
 ├── data/
-│   └── iaqvec-2026.json    # 학회별 데이터 (parser 산출물)
-├── parser.py               # IAQVEC·IBPSA 형식 PDF 파서
-├── build.py                # 새 학회 추가 자동화
+│   ├── iaqvec-2026.json
+│   ├── sarek-2025-winter.json
+│   └── sarek-2025-summer.json
+├── parser.py                     # IAQVEC·IBPSA 형식 PDF 파서
+├── parser_sarek.py               # SAREK 동계(가로 2단 컬럼) 파서
+├── parser_sarek_summer.py        # SAREK 하계(세로 1단 컬럼) 파서
+├── build.py                      # PDF → JSON → 학회 등록 자동화
 └── README.md
 ```
 
@@ -26,10 +44,12 @@ conference-planner/
 
 브라우저에서 사이트 URL을 열면 시작됩니다.
 
-| 접근 방식 | URL 예 |
+| 접근 방식 | URL |
 |---|---|
-| 기본 학회 | `https://<유저명>.github.io/conference-planner/` |
-| 특정 학회 명시 | `https://<유저명>.github.io/conference-planner/?conf=iaqvec-2026` |
+| 기본 학회 (IAQVEC 2026) | `https://imeru.github.io/conference-planner/` |
+| IAQVEC 2026 명시 | `…/?conf=iaqvec-2026` |
+| SAREK 2025 동계 | `…/?conf=sarek-2025-winter` |
+| SAREK 2025 하계 | `…/?conf=sarek-2025-summer` |
 | 다른 학회로 전환 | 헤더 드롭다운 또는 URL의 `?conf=` 변경 |
 
 **기본 흐름**
@@ -41,7 +61,7 @@ conference-planner/
 
 **데이터 저장**
 모든 선택·평점·메모는 **본인 브라우저의 localStorage**에 학회별로 분리 저장됩니다.
-학회 ID(`iaqvec-2026` 등)가 다르면 데이터도 서로 섞이지 않습니다.
+학회 ID가 다르면 데이터도 서로 섞이지 않습니다.
 
 ---
 
@@ -49,9 +69,9 @@ conference-planner/
 
 ### 최초 1회
 
-1. github.com에서 **New repository** → 이름 자유롭게(예: `conference-planner`) → **Public** → Create.
-2. 본 폴더의 모든 파일을 **Add file → Upload files**로 끌어다 놓고 **Commit changes**.
-   - 폴더 구조 그대로 올라가도록 `data/`도 함께 드래그.
+1. github.com에서 **New repository** → `conference-planner` → **Public** → Create.
+2. 본 폴더의 모든 파일·폴더를 **Add file → Upload files**로 끌어다 놓고 **Commit changes**.
+   - `data/` 폴더도 함께 드래그.
 3. **Settings → Pages** → Source: `main` 브랜치, `/ (root)` → **Save**.
 4. 1~2분 후 페이지 상단에 URL이 표시됩니다.
 
@@ -59,26 +79,52 @@ conference-planner/
 
 ### 다음 학회 추가
 
+학회마다 PDF 형식이 다르므로 적절한 파서를 선택해 실행합니다.
+
+| 학회 유형 | 파서 |
+|---|---|
+| IAQVEC·IBPSA·ASHRAE 등 영문 표 형식 | `parser.py` |
+| SAREK 동계 (가로 2단) | `parser_sarek.py` |
+| SAREK 하계 (세로 1단, 다일자) | `parser_sarek_summer.py` |
+| 그 외 형식 | 새 파서 작성 (아래 트러블슈팅 참고) |
+
+빌드 명령 예:
+
 ```bash
-python3 build.py /path/to/new_conference.pdf \
-  --id   iaqvec-2028 \
-  --name "IAQVEC 2028"
+# IAQVEC 형식
+python3 build.py /path/to/new_iaqvec.pdf \
+  --id iaqvec-2028 --name "IAQVEC 2028"
+
+# SAREK 동계
+python3 build.py /path/to/sarek-winter.pdf \
+  --parser parser_sarek.py \
+  --id sarek-2026-winter --name "대한설비공학회 2026 동계학술발표대회"
+
+# SAREK 하계
+python3 build.py /path/to/sarek-summer.pdf \
+  --parser parser_sarek_summer.py \
+  --id sarek-2026-summer --name "대한설비공학회 2026 하계학술발표대회" \
+  --year 2026 --month 6
 ```
 
-`build.py`가 자동으로 수행합니다.
-1. `parser.py`로 PDF 파싱 → 검증
-2. `data/iaqvec-2028.json` 생성
+`build.py`가 자동으로 다음을 수행합니다.
+1. 지정한 파서로 PDF 파싱 + 검증 (세션·발표 수, orphan 확인)
+2. `data/<id>.json` 생성
 3. `conferences.json`에 새 학회 항목 추가 (이미 있으면 갱신)
 
-이후 변경된 두 파일(`data/iaqvec-2028.json`, `conferences.json`)만 GitHub에 push하면 학생들이 보는 사이트에서 새 학회가 즉시 선택 가능해집니다. 기본 URL(`?conf=` 없는 접근)에 표시될 학회를 바꾸시려면 `--default` 옵션을 함께 주세요.
+이후 변경된 `data/<id>.json`과 `conferences.json` 두 파일만 GitHub에 push하면 학생들이 보는 사이트에서 새 학회가 즉시 선택 가능해집니다. HTML 자체는 건드릴 필요 없음.
+
+**옵션**
+- `--default`: 이 학회를 default로 지정 (URL에 `?conf` 없을 때 보이는 학회)
+- `--dry-run`: 파일 갱신 없이 파서 결과만 검증
 
 ### 학회 ID 명명 규칙
 
 | 형식 | 예 |
 |---|---|
 | `<학회약어>-<년도>` | `iaqvec-2026`, `iaqvec-2028` |
+| `<학회약어>-<년도>-<시즌>` | `sarek-2025-winter`, `sarek-2025-summer` |
 | `<학회약어>-<주최지>` | `ibpsa-bs-2027-glasgow` |
-| `<학회약어>-<년도>-<시즌>` | `sarek-2025-winter` |
 
 같은 ID로 재빌드하면 그 학회 학생들의 평점·메모는 그대로 유지됩니다.
 
@@ -86,7 +132,7 @@ python3 build.py /path/to/new_conference.pdf \
 
 ## 로컬에서 테스트하기
 
-`index.html`을 더블클릭으로 열면 **동작하지 않습니다**. 브라우저의 `file://` 보안 정책 때문에 `fetch()`로 다른 파일을 읽을 수 없기 때문입니다. 로컬 테스트는 다음 한 줄로 가능합니다.
+`index.html`을 더블클릭으로 열면 **동작하지 않습니다**. 브라우저의 `file://` 보안 정책 때문에 `fetch()`로 다른 파일을 읽을 수 없습니다. 로컬 테스트는 다음 한 줄로 가능합니다.
 
 ```bash
 cd /path/to/conference-planner
@@ -94,38 +140,31 @@ python3 -m http.server 8080
 ```
 
 그 다음 브라우저에서 `http://localhost:8080/` 접속.
-특정 학회는 `http://localhost:8080/?conf=iaqvec-2026`.
+특정 학회 검증: `http://localhost:8080/?conf=sarek-2025-winter`.
 
 ---
 
 ## 비표준 학회 PDF 대응
 
-본 `parser.py`는 표준적인 IAQVEC·IBPSA 학회 PDF 형식을 가정합니다. 다른 형식의 PDF는 부분 수정이 필요할 수 있습니다.
+기존 세 파서는 다음 가정을 합니다.
+
+| 파서 | 가정 |
+|---|---|
+| `parser.py` | 세로 페이지, 1단 컬럼, 표 형식. 영문. 발표 시간은 세션 전체 시간 → 15분 분할 |
+| `parser_sarek.py` | 가로 페이지(2단 컬럼), 1일, 발표마다 명시 시간 (HH:MM-HH:MM), `25-W-NNN` |
+| `parser_sarek_summer.py` | 세로 페이지, 1단 컬럼, 다일자(subsection 헤더에 일자 prefix), 발표마다 명시 시간, `(25-S-NNN)` |
 
 ### 진단
 
 ```bash
-python3 build.py /path/to/pdf.pdf --id test --name "Test" --dry-run
+python3 build.py /path/to/pdf.pdf --parser parser.py --id test --name "Test" --dry-run
 ```
-
-출력에서 다음을 확인:
 
 | 신호 | 의미 | 조치 |
 |---|---|---|
-| `sessions=0` 또는 `papers=0` | 세션 헤더 인식 실패 | `parser.py`의 `SESS_RE` 보강 |
+| `sessions=0` 또는 `papers=0` | 세션 헤더 인식 실패 | 해당 파서의 `SUBSECTION_RE`/`SESS_RE` 보강 |
 | `[경고] orphan papers: N` | 일부 세션만 인식 실패 | `TIME_LOC_RE` 등 보강 |
-| 발표 수가 PDF보다 적음 | 표 컬럼 좌표 다름 | `AUTHOR_X`, `TITLE_X` 조정 |
-
-### parser.py 주요 수정 지점
-
-```python
-AUTHOR_X = 190         # author 컬럼 시작 x 좌표
-TITLE_X  = 335         # title 컬럼 시작 x 좌표
-
-DAY_RE      = ...      # "Day 2: 5/19/2026 (Tue)" 패턴
-SESS_RE     = ...      # "Session 1 1-1 Indoor Air Quality" 패턴
-TIME_LOC_RE = ...      # "11:00 - 12:30 Location: SGM 123 / Session chair: ..." 패턴
-```
+| 발표 수가 PDF보다 적음 | 표 컬럼 좌표 다름 | `AUTHOR_X`/`TITLE_X` 또는 `META_X_MAX`/`TITLE_X_MAX` 조정 |
 
 PDF의 실제 좌표를 확인:
 
@@ -133,32 +172,49 @@ PDF의 실제 좌표를 확인:
 python3 -c "
 import pdfplumber
 with pdfplumber.open('/path/to/pdf.pdf') as pdf:
-    for w in pdf.pages[0].extract_words()[:40]:
+    p = pdf.pages[0]
+    print(f'page size: {p.width:.0f} × {p.height:.0f}')
+    for w in p.extract_words()[:40]:
         print(f\"{w['top']:6.1f} {w['x0']:6.1f}  {w['text']}\")
 "
 ```
 
-### 완전히 다른 형식이라면 (예: 한국어 학회·2단 레이아웃·세로형 등)
+### 완전히 다른 형식이라면
 
-별도 파서를 만들고 `build.py`에 `--parser parser_xxx.py` 옵션으로 사용합니다. 파서는 다음 JSON 스키마를 출력하면 됩니다.
+별도 파서 파일을 만들고 `build.py --parser <새파서>.py` 옵션으로 사용합니다. 파서는 다음 JSON 스키마를 출력하면 됩니다.
 
 ```json
 {
   "conference": { "id": "...", "name": "..." },
   "sessions": [
-    { "id": "1-A", "day": 1, "date": "11/28/2025",
-      "track_title": "냉동/열펌프 1",
-      "start": "08:50", "end": "10:05",
-      "building": "제4회장", "room": "",
-      "chair": "이동찬(서울시립대학교)" }
+    {
+      "id": "1-A",
+      "block": 1,
+      "day": 1,
+      "date": "11/28/2025",
+      "track_title": "...",
+      "start": "08:50",
+      "end": "10:05",
+      "building": "회장",
+      "room": "1",
+      "floor": 1,
+      "chair": "..."
+    }
   ],
   "papers": [
-    { "paper_no": "25-W-063", "session_id": "1-A",
-      "authors": "...", "title": "...",
-      "start": "08:50", "end": "09:05" }    // 발표별 명시 시간 (선택)
+    {
+      "paper_no": "25-W-001",
+      "session_id": "1-A",
+      "authors": "...",
+      "title": "...",
+      "start": "08:50",
+      "end": "09:05"
+    }
   ]
 }
 ```
+
+`paper.start` / `paper.end`가 있으면 그대로 사용되고, 없으면 세션 시간을 15분씩 분할해 자동 계산합니다.
 
 ---
 
