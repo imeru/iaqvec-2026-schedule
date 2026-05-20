@@ -231,6 +231,36 @@
   .toggle-collapse { background: none; border: none; cursor: pointer; font-size: 11px; color: #4a90e2; padding: 2px 6px; }
   .session.collapsed .paper-list { display: none; }
 
+  /* Now / past-session controls */
+  .browse-controls { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
+  .now-btn {
+    background: #d0021b; color: #fff; border: none; padding: 6px 14px; border-radius: 4px;
+    cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .now-btn:hover { background: #b00018; }
+  .now-btn:disabled { background: #ccc; cursor: not-allowed; }
+  .collapse-toggle { font-size: 12px; color: #444; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+  .now-hint { font-size: 11px; color: #888; }
+
+  /* Past session: collapsed + dimmed header */
+  .session.past { opacity: 0.6; }
+  .session.past .session-title { color: #888; }
+  .past-badge { font-size: 10px; color: #999; margin-left: 6px; }
+
+  /* Current session: highlight */
+  .session.current {
+    border-color: #d0021b; border-width: 2px;
+    box-shadow: 0 0 0 2px rgba(208,2,27,0.12);
+  }
+  .current-badge {
+    display: inline-block; background: #d0021b; color: #fff; font-size: 10px; font-weight: 600;
+    padding: 1px 7px; border-radius: 10px; margin-left: 6px;
+  }
+  .upcoming-badge {
+    display: inline-block; background: #2d6b2d; color: #fff; font-size: 10px; font-weight: 600;
+    padding: 1px 7px; border-radius: 10px; margin-left: 6px;
+  }
+
   .hidden { display: none !important; }
 
   mark { background: #fff59d; color: inherit; padding: 0 1px; border-radius: 2px; }
@@ -390,6 +420,13 @@
     </div>
 
     <div id="view-browse">
+      <div class="browse-controls" id="browse-controls">
+        <button id="btn-now" class="now-btn">🔴 지금</button>
+        <label class="collapse-toggle">
+          <input type="checkbox" id="toggle-collapse-past"> 지난 세션 접기
+        </label>
+        <span class="now-hint" id="now-hint"></span>
+      </div>
       <div id="session-list"></div>
     </div>
 
@@ -509,6 +546,8 @@ function initState() {
   view: localStorage.getItem('cs:view') || 'browse',
   // Itinerary sub-view: 'list' (cards + hop hints) or 'grid' (timetable: rooms × time)
   itineraryView: localStorage.getItem('cs:itinview') || 'list',
+  // 지난 세션 접기 (기본 on). localStorage 영속.
+  collapsePast: localStorage.getItem('cs:collapsepast') !== 'off',
 };
   rememberConference(DATA);
 }
@@ -579,6 +618,38 @@ function timeToMin(t) {
 }
 
 function sessionFor(paper) { return DATA.sessions.find(s => s.id === paper.session_id); }
+
+// Status of a session relative to the real-world "now":
+//   'past-day'  : its date is before today
+//   'future-day': its date is after today
+//   'past'      : today, but already ended
+//   'current'   : today and happening now
+//   'upcoming'  : today and not started yet
+// Returns 'none' if the date can't be parsed.
+function sessionStatus(s, now = new Date()) {
+  if (!s.date) return 'none';
+  const [m, d, y] = s.date.split('/').map(Number);
+  if (!m || !d || !y) return 'none';
+  const sDay   = new Date(y, m - 1, d).setHours(0,0,0,0);
+  const today  = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (sDay < today) return 'past-day';
+  if (sDay > today) return 'future-day';
+  // Same calendar day → compare times. now in 24h minutes.
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const startMin = s.start ? timeToMin(s.start) : 0;
+  const endMin   = s.end   ? timeToMin(s.end)   : 24 * 60;
+  if (endMin <= nowMin)   return 'past';
+  if (startMin > nowMin)  return 'upcoming';
+  return 'current';
+}
+
+// True if today (real-world) is one of this conference's dates.
+function conferenceIsToday(now = new Date()) {
+  return DATA.sessions.some(s => {
+    const st = sessionStatus(s, now);
+    return st === 'past' || st === 'current' || st === 'upcoming';
+  });
+}
 
 // Convert minutes-since-midnight back to "h:mm" using the same 12-hour-no-AM/PM
 // convention as the input (e.g., 13:30 internal → "1:30").
@@ -782,12 +853,19 @@ function renderSessions() {
 
     const div = document.createElement('div');
     div.className = 'session';
+    // 현재 시각 기준 상태 반영
+    const status = sessionStatus(s);
+    let statusBadge = '';
+    if (status === 'current')  { div.classList.add('current'); div.dataset.now = '1'; statusBadge = '<span class="current-badge">진행 중</span>'; }
+    else if (status === 'upcoming') { div.dataset.next = '1'; statusBadge = '<span class="upcoming-badge">예정</span>'; }
+    else if (status === 'past') { div.classList.add('past'); statusBadge = '<span class="past-badge">종료</span>';
+                                  if (state.collapsePast) div.classList.add('collapsed'); }
     const bldgTag = `<span class="building-tag tag-${s.building}">${hi(s.building + ' ' + s.room)}</span>`;
     const chair = s.chair ? `Chair: ${hi(s.chair)}` : '';
     div.innerHTML = `
       <div class="session-header">
         <div>
-          <div class="session-id">Session ${hi(s.id)} · Day ${s.day} ${s.start}–${s.end} ${bldgTag}</div>
+          <div class="session-id">Session ${hi(s.id)} · Day ${s.day} ${s.start}–${s.end} ${bldgTag}${statusBadge}</div>
           <div class="session-title">${hi(s.track_title)}</div>
           <div class="session-meta">${chair}</div>
         </div>
@@ -833,6 +911,46 @@ function renderSessions() {
 
   document.getElementById('stats').textContent =
     `${DATA.sessions.length} sessions · ${DATA.papers.length} papers · 선택: ${state.selected.size}`;
+}
+
+// Scroll the session list to the current (or next upcoming) session.
+// Returns true if a target was found and scrolled to.
+function scrollToNow(smooth = true) {
+  const list = document.getElementById('session-list');
+  // 1순위: 진행 중, 2순위: 예정(다음)
+  let target = list.querySelector('.session[data-now="1"]')
+            || list.querySelector('.session[data-next="1"]');
+  if (target) {
+    target.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
+    // 접혀 있으면 펴기
+    target.classList.remove('collapsed');
+    return true;
+  }
+  return false;
+}
+
+// Update the "지금" control bar (button state + hint text).
+function renderNowControls() {
+  const btn  = document.getElementById('btn-now');
+  const hint = document.getElementById('now-hint');
+  const chk  = document.getElementById('toggle-collapse-past');
+  if (!btn) return;
+  chk.checked = state.collapsePast;
+
+  const isToday = conferenceIsToday();
+  if (isToday) {
+    btn.disabled = false;
+    const hasCurrent = DATA.sessions.some(s => sessionStatus(s) === 'current');
+    hint.textContent = hasCurrent ? '현재 진행 중인 세션이 있습니다.' : '다음 예정 세션으로 이동합니다.';
+  } else {
+    btn.disabled = true;
+    // 학회가 과거인지 미래인지 안내
+    const anyFuture = DATA.sessions.some(s => sessionStatus(s) === 'future-day');
+    const anyPast   = DATA.sessions.some(s => sessionStatus(s) === 'past-day');
+    if (anyFuture && !anyPast)      hint.textContent = '아직 학회 시작 전입니다.';
+    else if (anyPast && !anyFuture) hint.textContent = '이미 종료된 학회입니다.';
+    else                            hint.textContent = '오늘은 학회 일정이 없습니다.';
+  }
 }
 
 // ====== Render: itinerary ======
@@ -1172,6 +1290,7 @@ function renderAll() {
   renderSessions();
   renderItinerary();
   renderView();
+  renderNowControls();
 }
 
 function escapeHtml(s) {
@@ -1474,6 +1593,22 @@ document.querySelectorAll('.view-tab').forEach(btn => {
   btn.onclick = () => setView(btn.dataset.view);
 });
 
+// ====== "지금" 버튼 + 지난 세션 접기 토글 ======
+document.getElementById('btn-now').onclick = () => {
+  // 둘러보기 탭이 아니면 먼저 전환
+  if (state.view !== 'browse') setView('browse');
+  if (!scrollToNow(true)) {
+    // 현재/예정 세션이 없으면 안내
+    const hint = document.getElementById('now-hint');
+    if (hint) hint.textContent = '오늘 진행 중이거나 예정된 세션이 없습니다.';
+  }
+};
+document.getElementById('toggle-collapse-past').onchange = (e) => {
+  state.collapsePast = e.target.checked;
+  localStorage.setItem('cs:collapsepast', e.target.checked ? 'on' : 'off');
+  renderSessions();
+};
+
 // ====== Boot (async: fetch data, then initialize) ======
 async function bootApp() {
   // Show a tiny loading hint while data fetches
@@ -1530,6 +1665,12 @@ async function bootApp() {
   initState();
   applyShareFromHash();
   renderAll();
+
+  // 학회 당일이면 현재/다음 세션으로 자동 스크롤 (둘러보기 탭일 때)
+  if (state.view === 'browse' && conferenceIsToday()) {
+    // 렌더 직후 DOM이 준비되도록 다음 틱에 실행
+    setTimeout(() => scrollToNow(true), 100);
+  }
 }
 
 bootApp();
