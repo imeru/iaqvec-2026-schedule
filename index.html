@@ -115,6 +115,21 @@
   }
   .iv-toggle button.active { background: #fff; color: #1f1f1f; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 
+  /* Itinerary header row (toggle + 지금 버튼) */
+  .iv-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .iv-header .iv-toggle { margin-bottom: 0; }
+
+  /* Pick card status (내 일정 리스트) */
+  .pick.past { opacity: 0.55; }
+  .pick.current { background: #fff5f5; border-radius: 4px; box-shadow: 0 0 0 2px rgba(208,2,27,0.25); padding: 4px 6px; }
+  .pick .pick-badge { font-size: 9px; font-weight: 600; padding: 0 5px; border-radius: 8px; margin-left: 4px; }
+  .pick .pick-badge.cur { background: #d0021b; color: #fff; }
+  .pick .pick-badge.up  { background: #2d6b2d; color: #fff; }
+  .pick .pick-badge.done{ background: #ddd; color: #777; }
+
+  /* Timetable current cell */
+  .tt-cell.current { outline: 2px solid #d0021b; outline-offset: -2px; }
+
   /* Timetable (grid view) */
   .tt-day { margin-bottom: 20px; }
   .tt-day h3 { font-size: 12px; margin: 0 0 8px; color: #1f1f1f; }
@@ -162,6 +177,12 @@
   .filter-toggles { font-size: 11px; }
   .filter-toggles a { color: #4a90e2; text-decoration: none; }
   .filter-toggles a:hover { text-decoration: underline; }
+  .time-range { display: flex; align-items: center; gap: 6px; }
+  .time-range input[type="time"] {
+    flex: 1; min-width: 0; padding: 5px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;
+  }
+  .time-range-sep { color: #888; font-size: 12px; }
+  .time-range-hint { font-size: 11px; color: #4a90e2; margin-top: 5px; min-height: 14px; }
   .day-tabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
   .day-select {
     width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px;
@@ -392,6 +413,18 @@
     </div>
     <div class="filter-group">
       <div class="filter-head">
+        <label>참석 가능 시간</label>
+        <span class="filter-toggles"><a href="#" id="timerange-clear">초기화</a></span>
+      </div>
+      <div class="time-range">
+        <input type="time" id="time-from" step="300">
+        <span class="time-range-sep">~</span>
+        <input type="time" id="time-to" step="300">
+      </div>
+      <div class="time-range-hint" id="time-range-hint"></div>
+    </div>
+    <div class="filter-group">
+      <div class="filter-head">
         <label>트랙</label>
         <span class="filter-toggles">
           <a href="#" data-act="all"  data-target="tracks">전체</a> ·
@@ -548,6 +581,9 @@ function initState() {
   itineraryView: localStorage.getItem('cs:itinview') || 'list',
   // 지난 세션 접기 (기본 on). localStorage 영속.
   collapsePast: localStorage.getItem('cs:collapsepast') !== 'off',
+  // 참석 가능 시간 범위 (분 단위, null = 미설정). 둘러보기 탭에만 적용.
+  timeFrom: null,
+  timeTo: null,
 };
   rememberConference(DATA);
 }
@@ -649,6 +685,41 @@ function conferenceIsToday(now = new Date()) {
     const st = sessionStatus(s, now);
     return st === 'past' || st === 'current' || st === 'upcoming';
   });
+}
+
+// 세션이 참석 가능 시간 범위와 겹치는지 (overlap). 범위 미설정 시 항상 true.
+function sessionInTimeRange(s) {
+  if (state.timeFrom == null && state.timeTo == null) return true;
+  if (!s.start || !s.end) return true;  // 시간 정보 없으면 거르지 않음
+  const sStart = timeToMin(s.start);
+  const sEnd   = timeToMin(s.end);
+  const from = state.timeFrom != null ? state.timeFrom : 0;
+  const to   = state.timeTo   != null ? state.timeTo   : 24 * 60;
+  return sStart < to && sEnd > from;   // overlap
+}
+
+// 모든 세션의 현재 상태를 이어붙인 시그니처. 슬롯 경계를 넘을 때만 값이 바뀐다.
+function statusSignature() {
+  return DATA.sessions.map(s => sessionStatus(s)).join('');
+}
+
+let _lastStatusSig = '';
+let _nowTimer = null;
+// 30초마다 상태 변화를 감지해, 바뀌었을 때만 시각 의존 화면을 다시 그린다.
+// 메모 입력 중이면 입력이 끊기지 않도록 이번 주기는 건너뛴다(다음 주기에 반영).
+function startNowTimer() {
+  if (_nowTimer) clearInterval(_nowTimer);
+  _lastStatusSig = statusSignature();
+  _nowTimer = setInterval(() => {
+    const sig = statusSignature();
+    if (sig === _lastStatusSig) return;                 // 변화 없음
+    const ae = document.activeElement;
+    if (ae && ae.classList && ae.classList.contains('note-input')) return; // 메모 입력 중 → 대기
+    _lastStatusSig = sig;
+    renderSessions();      // 둘러보기: 종료 세션 접기·배지 갱신
+    renderItinerary();     // 내 일정: 진행 중/예정/종료 갱신
+    renderNowControls();   // 컨트롤 바 안내 갱신
+  }, 30000);
 }
 
 // Convert minutes-since-midnight back to "h:mm" using the same 12-hour-no-AM/PM
@@ -804,7 +875,7 @@ function renderFilters() {
   });
 
   // 전체 / 해제 toggle links for both track and building filters
-  document.querySelectorAll('.filter-toggles a').forEach(a => {
+  document.querySelectorAll('.filter-toggles a[data-target]').forEach(a => {
     a.onclick = (e) => {
       e.preventDefault();
       const target = a.dataset.target;  // "tracks" or "buildings"
@@ -819,6 +890,27 @@ function renderFilters() {
       renderAll();
     };
   });
+
+  // 참석 가능 시간 범위 입력
+  const tFromEl = document.getElementById('time-from');
+  const tToEl   = document.getElementById('time-to');
+  const toHHMM = (min) => min == null ? '' :
+    `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
+  tFromEl.value = toHHMM(state.timeFrom);
+  tToEl.value   = toHHMM(state.timeTo);
+  const parseHHMM = (v) => {
+    if (!v) return null;
+    const [h, m] = v.split(':').map(Number);
+    return h * 60 + m;
+  };
+  tFromEl.onchange = () => { state.timeFrom = parseHHMM(tFromEl.value); renderSessions(); };
+  tToEl.onchange   = () => { state.timeTo   = parseHHMM(tToEl.value);   renderSessions(); };
+  document.getElementById('timerange-clear').onclick = (e) => {
+    e.preventDefault();
+    state.timeFrom = null; state.timeTo = null;
+    tFromEl.value = ''; tToEl.value = '';
+    renderSessions();
+  };
 }
 
 // ====== Render: session list ======
@@ -832,12 +924,14 @@ function renderSessions() {
     (a.day - b.day) || (timeToMin(a.start) - timeToMin(b.start)) || a.id.localeCompare(b.id)
   );
 
+  let shownCount = 0;
   for (const s of sorted) {
     if (state.dayFilter !== 'all' && s.day != state.dayFilter) continue;
     // Track/building filters: a session must be in BOTH selected sets to show.
     // Empty set = "전체 해제" → nothing of that dimension is included.
     if (!state.tracks.has(s.track_title)) continue;
     if (!state.buildings.has(s.building)) continue;
+    if (!sessionInTimeRange(s)) continue;
 
     const sPapers = DATA.papers.filter(p => p.session_id === s.id);
     // Session-level haystack: id, track, building, room, chair — so user can find
@@ -907,6 +1001,21 @@ function renderSessions() {
       pl.appendChild(row);
     }
     list.appendChild(div);
+    shownCount++;
+  }
+
+  // 시간 범위 필터 안내
+  const trHint = document.getElementById('time-range-hint');
+  if (trHint) {
+    if (state.timeFrom != null || state.timeTo != null) {
+      const fmt = (min) => min == null ? '' :
+        `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
+      const from = state.timeFrom != null ? fmt(state.timeFrom) : '시작';
+      const to   = state.timeTo   != null ? fmt(state.timeTo)   : '끝';
+      trHint.textContent = `${from}~${to}와 겹치는 세션 ${shownCount}개`;
+    } else {
+      trHint.textContent = '';
+    }
   }
 
   document.getElementById('stats').textContent =
@@ -991,10 +1100,14 @@ function renderItinerary() {
     it.pt = paperTime(it.s, it.p, idx, ordered.length);
   }
 
-  // ===== View toggle =====
-  let html = `<div class="iv-toggle">
-    <button class="${state.itineraryView==='list'?'active':''}" data-iv="list">📋 리스트</button>
-    <button class="${state.itineraryView==='grid'?'active':''}" data-iv="grid">🗓️ 시간표</button>
+  // ===== View toggle + 지금 버튼 =====
+  const showNow = conferenceIsToday();
+  let html = `<div class="iv-header">
+    <div class="iv-toggle">
+      <button class="${state.itineraryView==='list'?'active':''}" data-iv="list">📋 리스트</button>
+      <button class="${state.itineraryView==='grid'?'active':''}" data-iv="grid">🗓️ 시간표</button>
+    </div>
+    ${showNow ? '<button id="btn-now-itin" class="now-btn">🔴 지금</button>' : ''}
   </div>`;
 
   // ===== Timetable (grid) branch =====
@@ -1027,8 +1140,14 @@ function renderItinerary() {
         `<span class="star ${v<=n.rating?'on':''}" data-key="${it.key}" data-val="${v}">★</span>`
       ).join('');
       const timeBadge = pt ? `<span class="paper-time">${pt.start}–${pt.end}</span> ` : '';
-      return `<div class="pick">
-        <div class="ptitle">${timeBadge}${escapeHtml(it.p.title)}</div>
+      // 현재 시각 기준 상태 (날짜 + 발표 시간으로 판정). 접지 않고 강조/흐림만.
+      const st = pt ? sessionStatus({date: it.s.date, start: pt.start, end: pt.end}) : 'none';
+      let pickCls = '', pickBadge = '', nowAttr = '';
+      if (st === 'current')  { pickCls = ' current'; pickBadge = '<span class="pick-badge cur">진행 중</span>'; nowAttr = ' data-now="1"'; }
+      else if (st === 'upcoming') { pickBadge = '<span class="pick-badge up">예정</span>'; nowAttr = ' data-next="1"'; }
+      else if (st === 'past') { pickCls = ' past'; pickBadge = '<span class="pick-badge done">종료</span>'; }
+      return `<div class="pick${pickCls}"${nowAttr}>
+        <div class="ptitle">${timeBadge}${escapeHtml(it.p.title)}${pickBadge}</div>
         <div class="pauthors">${escapeHtml(it.p.authors)}</div>
         <div class="pmeta">${escapeHtml(it.s.building)} ${escapeHtml(it.s.room)} · ${escapeHtml(it.s.track_title)} · #${escapeHtml(it.p.paper_no)}
           <a href="#" data-key="${it.key}" class="rm" style="margin-left:6px;color:#d0021b;">제거</a></div>
@@ -1154,6 +1273,21 @@ function wireItineraryToggle() {
       renderItinerary();
     };
   });
+  // 내 일정 탭의 "지금" 버튼
+  const nowBtn = document.getElementById('btn-now-itin');
+  if (nowBtn) nowBtn.onclick = () => scrollToNowItinerary(true);
+}
+
+// 내 일정 패널 안에서 현재(없으면 다음) 발표로 스크롤.
+function scrollToNowItinerary(smooth = true) {
+  const root = document.getElementById('itinerary');
+  const target = root.querySelector('[data-now="1"]') || root.querySelector('[data-next="1"]')
+              || root.querySelector('.tt-cell.current');
+  if (target) {
+    target.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' });
+    return true;
+  }
+  return false;
 }
 
 // Compact author label for a grid cell: take last name of the first author.
@@ -1209,7 +1343,9 @@ function renderTimetable(byDay) {
       const rowSpan  = Math.max(1, Math.round((it.pt.endMin - it.pt.startMin) / 15));
       const n = getNote(it.key);
       const tooltip = `${it.p.title}\n${it.p.authors}`;
-      html += `<div class="tt-cell tag-${it.s.building}"
+      const st = sessionStatus({date: it.s.date, start: it.pt.start, end: it.pt.end});
+      const curCls = st === 'current' ? ' current' : '';
+      html += `<div class="tt-cell tag-${it.s.building}${curCls}"
         style="grid-column:${colIdx+2}; grid-row:${rowStart+2} / span ${rowSpan};"
         title="${escapeHtml(tooltip)}">
         <div class="tt-pno">#${escapeHtml(it.p.paper_no)} <span class="tt-author">${escapeHtml(firstAuthorLabel(it.p.authors))}</span></div>
@@ -1671,6 +1807,9 @@ async function bootApp() {
     // 렌더 직후 DOM이 준비되도록 다음 틱에 실행
     setTimeout(() => scrollToNow(true), 100);
   }
+
+  // 시각 의존 화면을 새로고침 없이 자동 갱신
+  startNowTimer();
 }
 
 bootApp();
