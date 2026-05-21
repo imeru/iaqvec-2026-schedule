@@ -215,6 +215,18 @@
   .filter-toggles { font-size: 11px; }
   .filter-toggles a { color: #4a90e2; text-decoration: none; }
   .filter-toggles a:hover { text-decoration: underline; }
+
+  /* Collapsible filter sections (트랙·건물) */
+  .filter-group[data-section] .filter-head { cursor: pointer; user-select: none; padding: 4px 0; }
+  .filter-group[data-section] .filter-head:hover label { color: #1f1f1f; }
+  .filter-chev {
+    display: inline-block; width: 10px; color: #888; font-size: 9px;
+    transition: transform 0.12s ease;
+  }
+  .filter-group[data-section="tracks"].collapsed #track-filter,
+  .filter-group[data-section="buildings"].collapsed #building-filter { display: none; }
+  .filter-group.collapsed .filter-toggles { display: none; }
+  .filter-group.collapsed { margin-bottom: 4px; }
   .time-range { display: flex; align-items: center; gap: 6px; }
   .time-range input[type="time"] {
     flex: 1; min-width: 0; padding: 5px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px;
@@ -487,9 +499,9 @@
       </div>
       <div class="time-range-hint" id="time-range-hint"></div>
     </div>
-    <div class="filter-group">
+    <div class="filter-group" data-section="tracks">
       <div class="filter-head">
-        <label>트랙</label>
+        <label><span class="filter-chev">▼</span> 트랙</label>
         <span class="filter-toggles">
           <a href="#" data-act="all"  data-target="tracks">전체</a> ·
           <a href="#" data-act="none" data-target="tracks">해제</a>
@@ -497,9 +509,9 @@
       </div>
       <div id="track-filter"></div>
     </div>
-    <div class="filter-group">
+    <div class="filter-group" data-section="buildings">
       <div class="filter-head">
-        <label>건물</label>
+        <label><span class="filter-chev">▼</span> 건물</label>
         <span class="filter-toggles">
           <a href="#" data-act="all"  data-target="buildings">전체</a> ·
           <a href="#" data-act="none" data-target="buildings">해제</a>
@@ -1930,6 +1942,33 @@ function expandAllVisible() {
 }
 document.getElementById('btn-collapse-all-browse').onclick = collapseAllVisible;
 document.getElementById('btn-expand-all-browse').onclick   = expandAllVisible;
+
+// ====== 필터 섹션 접기/펴기 (트랙·건물) ======
+// 모바일은 기본 접힘 (체크박스 목록이 길어 스크롤 부담이 큼). 데스크톱은 기본 펼침.
+// 사용자 토글 상태는 localStorage에 영속.
+(function setupFilterCollapse() {
+  const isMobile = window.matchMedia('(max-width: 720px)').matches;
+  document.querySelectorAll('.filter-group[data-section]').forEach(group => {
+    const name = group.dataset.section;
+    const key  = `cs:filter:${name}`;
+    const saved = localStorage.getItem(key);
+    const collapsed = saved !== null ? saved === 'closed' : isMobile;
+    if (collapsed) group.classList.add('collapsed');
+    const chev = group.querySelector('.filter-chev');
+    const updateChev = () => { if (chev) chev.textContent = group.classList.contains('collapsed') ? '▶' : '▼'; };
+    updateChev();
+    const head = group.querySelector('.filter-head');
+    if (!head) return;
+    head.onclick = (e) => {
+      // 전체/해제 링크 클릭은 접기에 영향 X
+      if (e.target.closest('.filter-toggles')) return;
+      const nowClosed = !group.classList.contains('collapsed');
+      group.classList.toggle('collapsed');
+      localStorage.setItem(key, nowClosed ? 'closed' : 'open');
+      updateChev();
+    };
+  });
+})();
 
 // ====== Floating "맨 위로" button (둘러보기·내 일정 탭에서만 표시) ======
 // 스크롤이 충분히 내려갔을 때만 떠오르고, 클릭하면 부드럽게 맨 위로 이동.
